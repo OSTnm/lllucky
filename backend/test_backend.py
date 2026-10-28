@@ -77,14 +77,79 @@ class Tests(unittest.TestCase):
         luck=struct.pack('<IfI',37,.3,12)+bytes(52)
         gold=struct.pack('<IfI',37,.25,11)+bytes(52)
         self.mem.parts[0xc000]=luck+gold
+        self.mem.parts[v+0x530]=struct.pack('<3Q',4,0xd000,3)
+        # Padding is unspecified in Rust's compact enum. Only byte 0 is a tag.
+        self.mem.parts[0xd000]=(struct.pack('<If',5,.125)
+                               +bytes([12,0x96,0x96,0xbe])+struct.pack('<f',.3)
+                               +bytes([11,0xfa,0x64,0x7d])+struct.pack('<f',.25))
 
     def test_necklace_and_mark_stack_without_changing_gold(self):
         self.add_necklace();gold=self.mem.read(0xc040,64)
         self.adj.tick(True,300)
         self.assertAlmostEqual(self.luck(),6.475,places=5)
         self.assertEqual(self.mem.read(0xc040,64),gold)
+        self.assertAlmostEqual(struct.unpack('<f',self.mem.read(0xd00c,4))[0],3)
         self.adj.restore();self.assertAlmostEqual(self.luck(),1,places=5)
         self.assertAlmostEqual(struct.unpack('<f',self.mem.read(0xc004,4))[0],.3,places=5)
+        self.assertAlmostEqual(struct.unpack('<f',self.mem.read(0xd00c,4))[0],.3,places=5)
+
+    def test_necklace_native_recalculation_uses_source_not_description(self):
+        self.add_necklace();self.adj.tick(True,300)
+        # Recompute from native sources, then append a normal level-up card.
+        sources=self.mem.parts[0xd000]+struct.pack('<If',12,.2)
+        self.mem.parts[0xd000]=sources
+        self.mem.parts[self.mem.vector+0x530]=struct.pack('<3Q',4,0xd000,4)
+        mark=struct.unpack('<f',self.mem.read(self.mem.item+16,4))[0]
+        luck=sum(struct.unpack_from('<f',sources,i+4)[0]
+                 for i in range(0,len(sources),8) if sources[i]==12)
+        self.mem.write_float(self.mem.vector+0x16c,mark+luck+.475)
+        count=len(self.mem.writes);self.adj.tick(True,300)
+        self.assertEqual(count,len(self.mem.writes))
+        self.assertAlmostEqual(self.luck(),6.675,places=5)
+        self.assertAlmostEqual(struct.unpack('<f',self.mem.read(0xc004,4))[0],.3,places=5)
+        self.assertAlmostEqual(struct.unpack('<f',self.mem.read(0xd014,4))[0],.25,places=5)
+        self.adj.restore();self.assertAlmostEqual(self.luck(),1.2,places=5)
+
+    def test_necklace_source_vector_reallocation_and_rebuild(self):
+        self.add_necklace();original=self.mem.parts[0xd000]
+        self.adj.tick(True,300)
+        # A rebuild derives fresh values from the untouched equipped effects.
+        self.mem.parts[0xe000]=original
+        self.mem.parts[self.mem.vector+0x530]=struct.pack('<3Q',4,0xe000,3)
+        self.mem.write_float(self.mem.vector+0x16c,3.775)
+        self.adj.tick(True,300);self.assertAlmostEqual(self.luck(),6.475,places=5)
+        old=self.mem.read(0xd000,24)
+        self.adj.restore();self.assertAlmostEqual(self.luck(),1,places=5)
+        self.assertEqual(old,self.mem.read(0xd000,24))
+
+    def test_ambiguous_or_invalid_stat_sources_prevent_necklace_write(self):
+        self.add_necklace()
+        self.mem.parts[self.mem.vector]=struct.pack('<3Q',0,8,0)
+        pair=self.mem.parts[0xd000][8:]
+        self.mem.parts[0xd000]=pair+pair
+        self.mem.parts[self.mem.vector+0x530]=struct.pack('<3Q',4,0xd000,4)
+        self.adj.tick(True,300);self.assertFalse(self.mem.writes)
+        self.mem.parts[0xd000]=struct.pack('<If',99,.3)+pair
+        self.mem.parts[self.mem.vector+0x530]=struct.pack('<3Q',4,0xd000,3)
+        self.adj.tick(True,300);self.assertFalse(self.mem.writes)
+
+    def test_necklace_vector_growth_retains_restore_value(self):
+        self.add_necklace();self.adj.tick(True,300)
+        self.mem.parts[0xe000]=self.mem.parts[0xd000]+struct.pack('<If',12,.2)
+        self.mem.parts[self.mem.vector+0x530]=struct.pack('<3Q',8,0xe000,4)
+        self.adj.tick(True,300)
+        self.adj=Adjustment(self.mem,[self.mem.definition],self.mem.vector,self.adj.journal)
+        self.adj.restore()
+        self.assertAlmostEqual(struct.unpack('<f',self.mem.read(0xe00c,4))[0],.3,places=5)
+        self.assertAlmostEqual(struct.unpack('<f',self.mem.read(0xe01c,4))[0],.2,places=5)
+
+    def test_necklace_can_disable_immediately_after_vector_growth(self):
+        self.add_necklace();self.adj.tick(True,300)
+        self.mem.parts[0xe000]=self.mem.parts[0xd000]
+        self.mem.parts[self.mem.vector+0x530]=struct.pack('<3Q',8,0xe000,3)
+        self.adj.restore()
+        self.assertAlmostEqual(struct.unpack('<f',self.mem.read(0xe00c,4))[0],.3,places=5)
+        self.assertAlmostEqual(self.luck(),1,places=5)
 
     def test_necklace_works_without_mark(self):
         self.add_necklace()

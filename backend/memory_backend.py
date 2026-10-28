@@ -212,7 +212,7 @@ def necklace_items(mem, vector):
     if len(effect_vec)!=24:return []
     capacity,effects,count = struct.unpack('<3Q',effect_vec)
     if not 2<=count<=capacity<=16:return []
-    result=[];gold_seen=False
+    luck_effects=[];gold_values=[]
     for index in range(count):
         address=effects+64*index;raw=mem.read(address,64)
         if len(raw)!=64:return []
@@ -220,12 +220,31 @@ def necklace_items(mem, vector):
         if tag!=37:continue
         value=struct.unpack_from('<f',raw,4)[0];stat=struct.unpack_from('<I',raw,8)[0]
         if not math.isfinite(value) or not 0<=value<=1e6:return []
-        if stat==11:gold_seen=True
-        if stat==12:
-            identity=struct.pack('<IIQQ',tag,stat,ip,effects).hex()
-            result.append({'address':address,'bonus_address':address+4,'definition':0,
-                           'identity':identity,'value':value,'kind':'necklace','label':'南海海带'})
-    return result if gold_seen and len(result)==1 else []
+        if stat==11:gold_values.append(value)
+        if stat==12:luck_effects.append(value)
+    if len(gold_values)!=1 or len(luck_effects)!=1:return []
+    # Amulet.effects is used for descriptions. Native stat recalculation folds
+    # a separate Vec<StatBoost> (8 bytes: u8 discriminant, padding, f32).
+    # The amulet contributes its ordered Luck/Gold pair to this vector. Require
+    # a unique matching pair; never treat an unrelated luck upgrade as gear.
+    source_header=mem.read(vector+0x530,24)
+    if len(source_header)!=24:return []
+    capacity,sources,count=struct.unpack('<3Q',source_header)
+    if not 2<=count<=capacity<=4096 or not sources or sources%4:return []
+    raw=mem.read(sources,count*8)
+    if len(raw)!=count*8:return []
+    boosts=[(raw[i*8],struct.unpack_from('<f',raw,i*8+4)[0]) for i in range(count)]
+    if any(tag>40 or not math.isfinite(value) or abs(value)>1e6 for tag,value in boosts):return []
+    # Match the equipped instance's gold amount, preserving its rarity.
+    matches=[i for i in range(count-1) if boosts[i][0]==12 and boosts[i][1]>=0
+             and boosts[i+1][0]==11 and abs(boosts[i+1][1]-gold_values[0])<1e-6]
+    if len(matches)!=1:return []
+    index=matches[0];address=sources+index*8
+    identity=struct.pack('<QQQQIf',vector,effects,ip,sources,index,gold_values[0]).hex()
+    logical_identity=struct.pack('<QQQf',vector,effects,ip,gold_values[0]).hex()
+    return [{'address':address,'bonus_address':address+4,'definition':0,
+             'identity':identity,'logical_identity':logical_identity,
+             'value':boosts[index][1],'kind':'necklace','label':'南海海带'}]
 
 def validate_owner(mem, vector, allowed_definitions):
     data = mem.read(vector, 24)
@@ -346,6 +365,19 @@ class Adjustment:
         if not owner: return None
         active = {i['address']:i for i in owner['items']}
         records_before = json.dumps(self.records, sort_keys=True)
+        # Vec growth can copy an already adjusted source to a new allocation.
+        # Carry its original across that move only for the same equipped object
+        # and an unchanged adjusted value. A rebuild from base values starts fresh.
+        moved = {}
+        for item in owner['items']:
+            logical=item.get('logical_identity')
+            if not logical:continue
+            candidates=[r for r in self.records.values() if r.get('logical_identity')==logical
+                        and abs(r['target']-item['value'])<=max(1e-7,abs(item['value'])*1e-7)]
+            if len(candidates)==1:moved[item['address']]=candidates[0]
+        for address,record in moved.items():
+            if address not in self.records or self.records[address]['identity']!=active[address]['identity']:
+                self.records[address]={**record,'identity':active[address]['identity']}
         for address in list(self.records):
             item = active.get(address)
             if not item or self.records[address]['identity'] != item['identity']:
@@ -355,8 +387,10 @@ class Adjustment:
             address = item['address']; record = self.records.get(address)
             if enabled:
                 if record is None:
-                    record = {'original':item['value'],'identity':item['identity'],'target':item['value']}
+                    record = {'original':moved.get(address,{}).get('original',item['value']),
+                              'identity':item['identity'],'target':item['value']}
                     self.records[address] = record
+                if 'logical_identity' in item:record['logical_identity']=item['logical_identity']
                 wanted = percent/100
                 record['target'] = wanted
             elif record:
