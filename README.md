@@ -2,7 +2,7 @@
 
 《艾泽拉斯幸存者》（Azeroth Survivors）的游戏内幸运饰品控制面板。
 
-在游戏中输入 `/lllucky` 打开面板，设置每件幸运饰品的加成。实际修改由随游戏运行的无窗口 Python 组件完成，不需要独立控制窗口。
+安装并启用 Mod 后，直接双击原来的 `AzerothSurvivors.exe`，在游戏中输入 `/lllucky` 打开面板并调整幸运值。后台由自动加载引导启动，不需要单独打开程序或 CMD。
 
 ## 功能
 
@@ -15,6 +15,7 @@
 - 只调整项链的幸运效果，保留金币加成。
 - 自动寻找游戏和装备；通过装备归属、数据结构、进程启动时间等检查后才写入。
 - 后台随游戏退出；插件停止发送心跳约 20 秒后关闭效果并尝试恢复原值。
+- 原游戏 EXE 不改名、不替换；自动加载引导转发系统窗口接口调用并带起配套组件。
 
 **这不是纯 Lua 数值修改插件。** Lua 面板负责保存配置和显示属性，Python 组件负责修改当前游戏进程内已装备饰品的加成。仅复制 AddOns 文件夹不会产生实际修改效果。
 
@@ -45,19 +46,25 @@ powershell -ExecutionPolicy Bypass -File .\scripts\install.ps1 `
 
 ```text
 AzerothSurvivors/
-├─ Start-Azeroth-lllucky.cmd
+├─ AzerothSurvivors.exe
+├─ dwmapi.dll
 ├─ benilla-config/AddOns/lllucky/
 │  ├─ lllucky.toc
 │  └─ lllucky.lua
 └─ Mods/lllucky/
    ├─ headless.py
    ├─ worker.py
-   └─ memory_backend.py
+   ├─ memory_backend.py
+   └─ bootstrap.ini
 ```
 
-使用 **`Start-Azeroth-lllucky.cmd`** 启动。若已有 `Start-Azeroth-Vulkan.cmd`，新启动器会调用它，保留显卡、Vulkan 和存档位置等设置；否则直接启动游戏。
+使用原来的 **`AzerothSurvivors.exe`** 启动。`dwmapi.dll` 引导会在游戏调用窗口接口时自动启动组件，并将调用转发给 Windows 系统 DWM 库。
 
-在游戏的 AddOns 列表启用 `lllucky`。完整启动后输入 `/lllucky`。直接运行游戏 EXE 不会自动启动后台组件。
+在游戏的 AddOns 列表启用 `lllucky`，进入一局后输入 `/lllucky`。插件未加载时不发送心跳，后台不会开启数值修改。
+
+若已有本工具生成的 Vulkan 启动脚本，安装器会保留脚本，并将可识别的显卡、Vulkan 和存档路径设置保存到 `Mods/lllucky/bootstrap.ini`，供直接 EXE 启动时使用。显式传入的环境变量优先。
+
+如果已有其他 Mod 的 `dwmapi.dll`，安装器会拒绝覆盖。可选 `-LauncherOnly` 兼容模式；只有这个模式会生成 `Start-Azeroth-lllucky.cmd`。
 
 `-WhatIf` 可预览安装操作；安装脚本不复制游戏数据、修改存档或上传任何内容。
 
@@ -84,6 +91,8 @@ AzerothSurvivors/
 
 ```mermaid
 flowchart LR
+  X[双击原游戏 EXE] --> Y[dwmapi.dll 自动加载引导]
+  Y --> C
   A[游戏内 lllucky 面板] -->|SetCVar| B[游戏配置 config.toml]
   B --> C[headless.py]
   C --> D[worker.py]
@@ -107,6 +116,7 @@ flowchart LR
 
 - 天选者印记已在实际游戏中验证开启、关闭、恢复原值及升级后保持。
 - 游戏内面板 → 自定义 CVar → 无窗口后台 → 实际属性的通道已在本机验证。
+- 自动加载引导通过隔离集成测试，并已在真实游戏中验证直接 EXE 启动会带起后台。
 - 1000%、10000%、100000%、1000000% 已完成实际属性写入与回读；**1000000% 不是已确定的游戏硬上限**。
 - 未对超高幸运的实际抽卡概率做统计验证，不能据此宣称必出某种品质。
 - 项链的效果布局已与游戏数据核对；叠加、恢复及保留金币已通过模拟内存测试，实际装备项链后的验证仍待补充。
@@ -121,7 +131,16 @@ python -m unittest discover -s backend -p "test_*.py" -v
 python -m py_compile backend\memory_backend.py backend\worker.py backend\headless.py
 ```
 
-测试不需要运行游戏，覆盖：开关恢复、保留其他幸运来源、属性重算、饰品替换、旧会话隔离、项链与印记叠加、金币保留、配置解析及心跳超时。
+从源码构建引导需要 Visual Studio C++ Build Tools 和 Windows SDK；Release ZIP 已包含编译好的 DLL，普通使用者不需要编译器：
+
+```powershell
+.\scripts\build_native.ps1 -Verify
+python .\scripts\package_release.py --tag v2.1.0 --output dist
+```
+
+`-Verify` 在隔离目录创建测试宿主，检查直接 EXE 启动、早期环境设置及无窗口组件自动启动。源码仓库不保存编译产物，发布流水线会重新构建并打包。
+
+Python 测试不需要运行游戏，覆盖：开关恢复、保留其他幸运来源、属性重算、饰品替换、旧会话隔离、项链与印记叠加、金币保留、配置解析及心跳超时。
 
 从源码目录调试时可指定游戏位置：
 
@@ -138,6 +157,7 @@ python .\backend\headless.py
 addon/lllucky/       游戏内面板与 TOC
 backend/            无窗口后台、内存操作、测试
 scripts/install.ps1 可移植安装脚本
+native/             自动加载引导与隔离测试宿主源码
 ```
 
 运行时产生 `runtime-state.json`、`headless-state.json`、`headless.pid` 和日志。这些文件含本机会话信息，已在 `.gitignore` 中排除；不要提交它们。
@@ -146,7 +166,7 @@ scripts/install.ps1 可移植安装脚本
 
 **有面板但数值没变化？**
 
-确认从配套启动器进入游戏、本局已装备受支持饰品、开关已开启。首次查找需要等待；可查看组件目录下的 `headless-state.json` 和 `lllucky.log`。
+确认自动加载引导和 `bootstrap.ini` 已安装、本局已装备受支持饰品、开关已开启。可查看组件目录下的 `bootstrap.log`、`headless-state.json` 和 `lllucky.log`。
 
 **总幸运还是 0%？**
 
@@ -158,8 +178,8 @@ scripts/install.ps1 可移植安装脚本
 
 **怎么停用或移除？**
 
-先在游戏中关闭开关并确认原值恢复，再退出游戏。删除 `benilla-config/AddOns/lllucky` 和 `Mods/lllucky`，以后使用原来的游戏启动器即可。
+先在游戏中关闭开关并确认原值恢复，再退出游戏。移除本工具安装的 `dwmapi.dll`、`benilla-config/AddOns/lllucky` 和 `Mods/lllucky`。原游戏 EXE 保持原样。
 
 ## 项目边界
 
-本仓库只包含面板和配套控制代码，不包含游戏程序、美术、MPQ 数据、存档或第三方插件源码。它是独立的本地工具，与游戏作者及 Blizzard 无隶属关系。
+本仓库只包含面板、配套控制和自动加载引导的源码，不包含游戏程序、美术、MPQ 数据、存档或第三方插件源码。Release ZIP 额外包含本项目编译的引导 DLL。它是独立的本地工具，与游戏作者及 Blizzard 无隶属关系。

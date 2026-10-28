@@ -34,6 +34,10 @@ jobs:
       - name: Package and verify
         shell: pwsh
         run: |
+          ./scripts/build_native.ps1 -Verify
+      - name: Package release
+        shell: pwsh
+        run: |
           python scripts/package_release.py --tag "$env:GITHUB_REF_NAME" --output dist
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - name: Publish release

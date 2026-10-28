@@ -21,3 +21,7 @@ Videos/
 Captures/
 *.mp4
 dist/
+build/
+*.obj
+*.lib
+*.exp
