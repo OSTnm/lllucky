@@ -20,3 +20,4 @@ characters*.txt
 Videos/
 Captures/
 *.mp4
+dist/

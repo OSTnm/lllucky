@@ -141,7 +141,29 @@ def definition_ok(mem, definition):
 
 def definitions(mem):
     found = []
+    racials = set()
     for base, data in mem.image_sections():
+        # A native racial ability sits beside the run's stats. Locate it before
+        # searching every inventory reference across the entire heap.
+        for name in (b'Perception',b'Blood Fury',b'War Stomp',b'Stoneform',b'Berserking',
+                     b'Escape Artist',b'Shadowmeld',b'Will of the Forsaken'):
+            start=0
+            while True:
+                pos=data.find(name,start)
+                if pos<0:break
+                needle=struct.pack('<QQ',base+pos,len(name));at=0
+                while True:
+                    match=data.find(needle,at)
+                    if match<0:break
+                    address=base+match-16;raw=mem.read(address,48)
+                    if len(raw)==48:
+                        kp,kl,np,nl,ip,il=struct.unpack('<6Q',raw)
+                        if 0<kl<40 and 0<il<100:
+                            key=mem.read(kp,kl);icon=mem.read(ip,il)
+                            if key.replace(b'_',b'').isalnum() and len(icon)==il and all(32<=x<127 for x in icon):
+                                racials.add(address)
+                    at=match+1
+                start=pos+1
         # The necklace stores mutable effects rather than a trinket value.
         name = b'Pristine Enchanted South Seas Kelp'
         name_at = data.find(name)
@@ -172,6 +194,7 @@ def definitions(mem):
                 if definition_ok(mem, definition): found.append(definition)
                 at = match+1
             start = pos+1
+    mem.racial_defs=sorted(racials)
     return sorted(set(found))
 
 def necklace_items(mem, vector):
@@ -234,6 +257,22 @@ def validate_owner(mem, vector, allowed_definitions):
     return {'vector':vector, 'stat':vector+0x16c, 'luck':s[11], 'items':items}
 
 def locate(mem, defs, stop=lambda:False, progress=lambda message:None):
+    racial_defs=getattr(mem,'racial_defs',[])
+    if racial_defs:
+        progress('正在快速定位角色…')
+        needles=[struct.pack('<Q',p) for p in racial_defs]
+        for base,size in mem.regions():
+            if stop():return None
+            if size>16*1024*1024:continue
+            data=mem.read(base,size)
+            for needle in needles:
+                start=0
+                while True:
+                    at=data.find(needle,start)
+                    if at<0:break
+                    vector=base+at-0xd0
+                    if vector%8==0 and validate_owner(mem,vector,defs):return vector
+                    start=at+1
     progress('正在寻找幸运饰品…')
     candidates = set()
     necklace_vectors = set()

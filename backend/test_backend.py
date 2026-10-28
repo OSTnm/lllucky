@@ -4,7 +4,7 @@ from pathlib import Path
 import struct
 import tempfile
 import unittest
-from memory_backend import Adjustment, MAX_PERCENT, validate_owner
+from memory_backend import Adjustment, MAX_PERCENT, validate_owner, locate
 
 class FakeMemory:
     pid=123
@@ -99,5 +99,25 @@ class Tests(unittest.TestCase):
         self.mem.parts[self.mem.vector]=struct.pack('<3Q',0,8,0)
         self.adj.tick(True,300)
         self.assertFalse(self.mem.writes)
+
+    def test_fast_lookup_finds_owner_before_full_heap_scan(self):
+        self.mem.racial_defs=[0x12345678]
+        original_read=self.mem.read
+        def root_read(address,size):
+            if address==self.mem.vector and size==0x200:
+                data=bytearray(0x200)
+                for base,part in self.mem.parts.items():
+                    off=base-self.mem.vector
+                    if 0<=off and off+len(part)<=len(data):data[off:off+len(part)]=part
+                struct.pack_into('<Q',data,0xd0,self.mem.racial_defs[0])
+                return bytes(data)
+            return original_read(address,size)
+        self.mem.read=root_read
+        self.mem.regions=lambda:iter([(self.mem.vector,0x200)])
+        self.assertEqual(locate(self.mem,[self.mem.definition]),self.mem.vector)
+
+    def test_fast_lookup_can_cache_run_before_luck_item_is_obtained(self):
+        self.mem.parts[self.mem.vector]=struct.pack('<3Q',0,8,0)
+        self.test_fast_lookup_finds_owner_before_full_heap_scan()
 
 if __name__=='__main__':unittest.main()
