@@ -1,0 +1,7 @@
+## Interface: 11200
+## Title: lllucky 幸运控制
+## Notes: 幸运饰品的游戏内控制面板。需要配套的无窗口组件。
+## Author: OSTNM
+## Version: 2.0.0
+## SavedVariables: llluckyDB
+lllucky.lua

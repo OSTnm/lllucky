@@ -1,0 +1,22 @@
+# Runtime information is machine- and process-specific.
+__pycache__/
+*.py[cod]
+*.log
+*.pid
+*.tmp
+runtime-state.json
+headless-state.json
+range-test.json
+stop-backend.request
+backups/
+.venv/
+venv/
+# Never include game binaries, data or saves.
+*.exe
+*.dll
+*.MPQ
+*.sav
+characters*.txt
+Videos/
+Captures/
+*.mp4
