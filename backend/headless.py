@@ -93,7 +93,8 @@ def main():
             if time.monotonic()-last_state>=1:
                 write_state({'backend_pid':os.getpid(),'game_pid':probe.pid if probe else None,
                              'enabled':command['enabled'],'percent':command['percent'],'channel_live':command['live'],
-                             'channel_status':command['reason'],'status':status,'time':time.time()})
+                             'channel_status':command['reason'],'status':status,
+                             'worker':worker.diagnostic_snapshot(),'time':time.time()})
                 last_state=time.monotonic()
             time.sleep(.25)
     finally:

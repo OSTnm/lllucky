@@ -4,7 +4,7 @@ import logging
 import queue
 import threading
 import time
-from memory_backend import Memory, Adjustment, ROOT, processes, definitions, validate_owner, locate
+from memory_backend import Memory, Adjustment, ROOT, processes, definitions, validate_owner, locate, inspect_owner
 
 class Worker(threading.Thread):
     def __init__(self, messages):
@@ -13,6 +13,23 @@ class Worker(threading.Thread):
         self.enabled = True; self.percent = 300; self.stopping = threading.Event()
         self.rescan = threading.Event(); self.mem = None; self.adjustment = None
         self.error = None; self.last_status = None
+        self._diagnostic = {}; self._diagnostic_after = 0; self._target_signature = None
+
+    def diagnostic_snapshot(self):
+        with self.lock:return dict(self._diagnostic)
+
+    def capture_diagnostic(self, defs):
+        now=time.monotonic()
+        vector=self.adjustment.vector if self.adjustment else None
+        signature=(self.mem.pid if self.mem else None,vector,tuple(defs))
+        if now<self._diagnostic_after and signature==self._target_signature:return
+        snapshot=inspect_owner(self.mem,vector,defs) if self.mem else {'pid':None,'vector':None}
+        snapshot['captured_at']=time.time()
+        with self.lock:self._diagnostic=snapshot
+        self._diagnostic_after=now+2
+        if signature!=self._target_signature:
+            logging.info('Worker target: %s',json.dumps(snapshot,ensure_ascii=False))
+            self._target_signature=signature
 
     def status(self, text):
         if text != self.last_status:
@@ -27,6 +44,7 @@ class Worker(threading.Thread):
                 if self.mem.alive() and self.adjustment: self.adjustment.restore()
             finally:
                 self.mem.close(); self.mem = None; self.adjustment = None
+                with self.lock:self._diagnostic={}
 
     def cached_vector(self):
         try:
@@ -48,6 +66,7 @@ class Worker(threading.Thread):
                     with self.lock: enabled, percent = self.enabled,self.percent
                     if self.mem and not self.mem.alive():
                         self.mem.close(); self.mem = None; self.adjustment = None; defs = []; scan_after = 0
+                        self.capture_diagnostic(defs)
                     if not self.mem:
                         pids = processes()
                         if not pids:
@@ -59,10 +78,12 @@ class Worker(threading.Thread):
                         vector = self.cached_vector()
                         if vector and validate_owner(self.mem,vector,defs):
                             self.adjustment = Adjustment(self.mem,defs,vector)
+                        self.capture_diagnostic(defs)
                     if self.rescan.is_set():
                         # Restore before dropping ownership tracking.
                         if self.adjustment: self.adjustment.restore()
                         self.adjustment = None; scan_after = 0; self.rescan.clear()
+                        self.capture_diagnostic(defs)
                     if not self.adjustment:
                         if not enabled:
                             self.status('已关闭 · 不修改游戏'); self.stopping.wait(.3); continue
@@ -72,8 +93,10 @@ class Worker(threading.Thread):
                             else:
                                 scan_after = time.monotonic()+30
                                 self.status('等待装备印记或幸运项链 · 可点“重新查找”')
+                            self.capture_diagnostic(defs)
                         self.stopping.wait(.3); continue
                     result = self.adjustment.tick(enabled,percent)
+                    self.capture_diagnostic(defs)
                     if result is None:
                         self.adjustment = None; scan_after = time.monotonic()+2
                         self.status('等待进入下一局…')

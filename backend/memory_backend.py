@@ -275,6 +275,37 @@ def validate_owner(mem, vector, allowed_definitions):
     items.extend(necklace_items(mem,vector))
     return {'vector':vector, 'stat':vector+0x16c, 'luck':s[11], 'items':items}
 
+def inspect_owner(mem, vector, allowed_definitions):
+    """Bounded read-only snapshot of the worker's actual target, not the journal."""
+    result={'pid':mem.pid,'vector':vector,'definitions':list(allowed_definitions),
+            'owner_valid':False,'recognized_items':[],'trinkets':[]}
+    if not vector:return result
+    owner=validate_owner(mem,vector,allowed_definitions)
+    if owner:
+        result.update(owner_valid=True,luck_percent=owner['luck']*100,
+                      recognized_items=[{'kind':i['kind'],'percent':i['value']*100,
+                                         'address':i['bonus_address']} for i in owner['items']])
+    header=mem.read(vector,24)
+    if len(header)==24:
+        cap,ptr,count=struct.unpack('<3Q',header)
+        if cap in (0,1,2,4,8,16) and count<=min(cap,8) and ptr and ptr%8==0:
+            for index in range(count):
+                raw=mem.read(ptr+index*24,24)
+                if len(raw)!=24:break
+                definition=struct.unpack_from('<Q',raw)[0]
+                value=struct.unpack_from('<f',raw,16)[0]
+                result['trinkets'].append({'definition':definition,
+                    'allowed':definition in allowed_definitions,
+                    'chosen_definition_valid':definition_ok(mem,definition),
+                    'percent':value*100 if math.isfinite(value) else None})
+    key=mem.read(vector+0x60,24)
+    if len(key)==24:
+        cap,ptr,length=struct.unpack('<3Q',key)
+        if 0<length<=min(cap,128):
+            raw=mem.read(ptr,length)
+            if len(raw)==length:result['necklace_key']=raw.decode('utf-8',errors='replace')
+    return result
+
 def locate(mem, defs, stop=lambda:False, progress=lambda message:None):
     racial_defs=getattr(mem,'racial_defs',[])
     if racial_defs:
