@@ -16,6 +16,7 @@ class FakeMemory:
         self.parts[self.item]=struct.pack('<QII f I',self.definition,0,0,.225,1)
         self.parts[self.definition]=struct.pack('<8Q',0x6000,6,0x7000,18,0x8000,23,0x9000,10)
         self.parts[0x6000]=b'chosen';self.parts[0x7000]=b'Mark of the Chosen';self.parts[0x9000]=b'+{v}% luck'
+        self.parts[0x8000]=b'INV_Jewelry_Talisman_04'
         stats=[400,2,.8,.1,2,1.1,18,1.1,.4,2,1.1,1.0,1.3]+[0]*13
         self.parts[self.vector+0x140]=struct.pack('<26f',*stats)
     def read(self,address,size):
@@ -54,6 +55,14 @@ class Tests(unittest.TestCase):
         self.mem.write_float(self.mem.vector+0x140+8*4,9)
         count=len(self.mem.writes);self.assertIsNone(self.adj.tick(True,300))
         self.assertEqual(count,len(self.mem.writes))
+
+    def test_recycled_heap_with_plausible_stats_is_not_a_character(self):
+        # Previously an invalid definition plus a finite garbage bonus passed
+        # owner validation, leaving the worker waiting forever on a stale run.
+        self.mem.parts[self.mem.item]=struct.pack('<QII f I',0xdead0000,0,0,1e-21,1)
+        self.assertIsNone(validate_owner(self.mem,self.mem.vector,[self.mem.definition]))
+        self.assertIsNone(self.adj.tick(True,10000))
+        self.assertFalse(self.mem.writes)
     def test_restart_recovery_remembers_original(self):
         self.adj.tick(True,300)
         resumed=Adjustment(self.mem,[self.mem.definition],self.mem.vector,self.adj.journal)

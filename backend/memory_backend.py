@@ -139,6 +139,19 @@ def definition_ok(mem, definition):
     return (kl == 6 and nl == 18 and dl == 10 and mem.read(kp, kl) == b'chosen'
             and mem.read(np, nl) == b'Mark of the Chosen' and mem.read(dp, dl) == b'+{v}% luck')
 
+def trinket_definition_ok(mem, definition):
+    # A recycled heap block can retain plausible floats and vector lengths.
+    # Every equipped record must still point to a real native definition.
+    raw=mem.read(definition,64)
+    if len(raw)!=64:return False
+    kp,kl,np,nl,ip,il,dp,dl=struct.unpack('<8Q',raw)
+    if not (1<=kl<=64 and 1<=nl<=128 and 1<=il<=128 and 1<=dl<=2048):return False
+    key=mem.read(kp,kl);name=mem.read(np,nl);icon=mem.read(ip,il);description=mem.read(dp,dl)
+    return (len(key)==kl and key.replace(b'_',b'').isalnum()
+            and len(name)==nl and all(32<=v<127 for v in name)
+            and len(icon)==il and all(32<=v<127 for v in icon)
+            and len(description)==dl and all(32<=v<127 for v in description))
+
 def definitions(mem):
     found = []
     racials = set()
@@ -268,6 +281,7 @@ def validate_owner(mem, vector, allowed_definitions):
         definition = struct.unpack_from('<Q', record)[0]
         value = struct.unpack_from('<f', record, 16)[0]
         if not math.isfinite(value) or not 0 <= value <= 1e6: return None
+        if not trinket_definition_ok(mem,definition):return None
         if definition in allowed_definitions and definition_ok(mem, definition):
             items.append({'address':address, 'bonus_address':address+16, 'definition':definition,
                           'identity':(record[:16]+record[20:24]).hex(), 'value':value,

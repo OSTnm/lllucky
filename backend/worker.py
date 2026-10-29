@@ -88,6 +88,7 @@ class Worker(threading.Thread):
                         if not enabled:
                             self.status('已关闭 · 不修改游戏'); self.stopping.wait(.3); continue
                         if time.monotonic()>=scan_after:
+                            self.capture_diagnostic(defs)
                             vector = locate(self.mem,defs,self.cancel_scan,self.status)
                             if vector: self.adjustment = Adjustment(self.mem,defs,vector)
                             else:
@@ -99,6 +100,7 @@ class Worker(threading.Thread):
                     self.capture_diagnostic(defs)
                     if result is None:
                         self.adjustment = None; scan_after = time.monotonic()+2
+                        self.capture_diagnostic(defs)
                         self.status('等待进入下一局…')
                     elif not result['has_item']:
                         self.status('已连接 · 等待天选者印记或南海海带')
